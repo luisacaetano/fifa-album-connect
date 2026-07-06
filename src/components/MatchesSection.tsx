@@ -45,11 +45,22 @@ const alias: Record<string, string> = {
 };
 const canon = (n: string) => alias[n] ?? n;
 
+// Normaliza texto para comparação (sem acentos, só alfanumérico minúsculo).
+const normStr = (s: string) =>
+  (s ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+// Mapa nome (em inglês) -> id do time, para resolver os jogos de mata-mata vindos da ESPN.
+const nameToId: Record<string, string> = {};
+for (const [id, t] of Object.entries(teams)) nameToId[normStr(t.name_en)] = id;
+// Núcleo do nome do estádio (sem a palavra "stadium/estadio"), para casar sedes.
+const venueCore = (s: string) => normStr((s ?? "").replace(/stadium|estadio/gi, ""));
+
 type Score = { h: string; a: string; state: string; detail: string };
 const STAR_KEY = "partidas-marcadas";
 
 export function MatchesSection() {
   const [scores, setScores] = useState<Record<string, Score>>({});
+  // Times reais do mata-mata resolvidos a partir da ESPN (id do jogo -> ids dos times).
+  const [koTeams, setKoTeams] = useState<Record<number, { homeId: string; awayId: string }>>({});
   const [country, setCountry] = useState(BRAZIL_ID);
   const [phase, setPhase] = useState<"all" | "groups" | "knockout">("all");
   const [onlyStarred, setOnlyStarred] = useState(false);
@@ -92,6 +103,8 @@ export function MatchesSection() {
         const res = await fetch(ESPN);
         const data = await res.json();
         const map: Record<string, Score> = {};
+        // Eventos da ESPN com sede/data/times, usados para resolver o chaveamento do mata-mata.
+        const evList: { venue: string; city: string; date: number; homeId?: string; awayId?: string }[] = [];
         for (const e of data.events ?? []) {
           const comp = e.competitions?.[0];
           const cs = comp?.competitors ?? [];
@@ -101,8 +114,40 @@ export function MatchesSection() {
           const st = e.status?.type ?? {};
           const sc: Score = { h: home.score, a: away.score, state: st.state, detail: st.shortDetail ?? "" };
           map[`${canon(home.team.displayName)}|${canon(away.team.displayName)}`] = sc;
+          const venue = comp?.venue ?? {};
+          evList.push({
+            venue: venueCore(venue.fullName ?? ""),
+            city: normStr(venue.address?.city ?? ""),
+            date: Date.parse(e.date),
+            homeId: nameToId[normStr(canon(home.team.displayName))],
+            awayId: nameToId[normStr(canon(away.team.displayName))],
+          });
         }
-        if (alive) setScores(map);
+
+        // Resolve cada jogo de mata-mata casando por sede (ou cidade) + data (janela de 30h),
+        // só quando os dois times já estão definidos na ESPN. Os ainda indefinidos seguem com rótulo.
+        const ko: Record<number, { homeId: string; awayId: string }> = {};
+        for (const m of matches) {
+          if (!m.knockout) continue;
+          const s = stadiums[m.stadiumId];
+          if (!s) continue;
+          const ourVenue = venueCore(s.name);
+          const ourCity = normStr(s.city);
+          const wcDate = Date.parse(m.iso.replace(" ", "T") + "Z");
+          let best: { d: number; homeId?: string; awayId?: string } | null = null;
+          for (const ev of evList) {
+            const d = Math.abs(ev.date - wcDate);
+            if (d > 30 * 3_600_000) continue;
+            const venueMatch = !!ourVenue && !!ev.venue && (ev.venue.includes(ourVenue) || ourVenue.includes(ev.venue));
+            const cityMatch = !!ev.city && (ourCity.includes(ev.city) || ev.city.includes(ourCity));
+            if ((venueMatch || cityMatch) && (!best || d < best.d)) best = { d, homeId: ev.homeId, awayId: ev.awayId };
+          }
+          if (best?.homeId && best.awayId) ko[m.id] = { homeId: best.homeId, awayId: best.awayId };
+        }
+        if (alive) {
+          setScores(map);
+          setKoTeams(ko);
+        }
       } catch {
         /* sem placares: mostra horário */
       }
@@ -174,6 +219,12 @@ export function MatchesSection() {
     return { rows, total, max: rows[0]?.n ?? 1 };
   }
 
+  // Partidas com os times do mata-mata já preenchidos (quando resolvidos pela ESPN).
+  const resolvedMatches = useMemo(
+    () => matches.map((m) => (m.knockout && koTeams[m.id] ? { ...m, homeId: koTeams[m.id].homeId, awayId: koTeams[m.id].awayId } : m)),
+    [koTeams],
+  );
+
   // Avisa (toast) quando um palpite SEU cravou o placar final de um jogo encerrado.
   useEffect(() => {
     if (!user) return;
@@ -186,7 +237,7 @@ export function MatchesSection() {
     const novos: string[] = [];
     for (const p of preds) {
       if (p.uid !== user.uid || seen.has(p.id)) continue;
-      const m = matches.find((x) => x.id === p.matchId);
+      const m = resolvedMatches.find((x) => x.id === p.matchId);
       if (!m || !m.homeId || !m.awayId) continue;
       const res = scoreFor(m);
       if (!res || res.state !== "post") continue;
@@ -203,10 +254,10 @@ export function MatchesSection() {
         /* ignora */
       }
     }
-  }, [preds, scores, user]);
+  }, [preds, scores, user, resolvedMatches]);
 
   const filtered = useMemo(() => {
-    return matches.filter((m) => {
+    return resolvedMatches.filter((m) => {
       if (phase === "groups" && m.knockout) return false;
       if (phase === "knockout" && !m.knockout) return false;
       if (country !== "all" && m.homeId !== country && m.awayId !== country) return false;
@@ -214,7 +265,7 @@ export function MatchesSection() {
       if (onlyPredicted && !myPred(m.id)) return false;
       return true;
     });
-  }, [country, phase, onlyStarred, starred, onlyPredicted, preds, user]);
+  }, [resolvedMatches, country, phase, onlyStarred, starred, onlyPredicted, preds, user]);
 
   // agrupa por data
   const byDate = useMemo(() => {
