@@ -75,8 +75,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: "Álbum FIFA 2026 — Colecione, troque e complete" },
       { name: "twitter:description", content: "Rede social para colecionadores do álbum FIFA World Cup 2026: jogadores, partidas e trocas em tempo real." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/cbc67529-9988-4180-89c3-9f01bc60c307/id-preview-c9dfecb0--6bdef81f-6714-4099-9060-c4e346fd7d0d.lovable.app-1782148821991.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/cbc67529-9988-4180-89c3-9f01bc60c307/id-preview-c9dfecb0--6bdef81f-6714-4099-9060-c4e346fd7d0d.lovable.app-1782148821991.png" },
+      { property: "og:image", content: "https://fifa-album.vercel.app/og.png" },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
+      { property: "og:url", content: "https://fifa-album.vercel.app/" },
+      { name: "twitter:image", content: "https://fifa-album.vercel.app/og.png" },
     ],
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
